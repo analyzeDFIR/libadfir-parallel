@@ -211,7 +211,7 @@ class LoggedWorker(BaseWorker):
     Worker class that logs at start and finish as well as
     if it encounters an exception processing a task
     '''
-    def __init__(*args, log_path, temp_log=False, **kwargs):
+    def __init__(*args, log_path, **kwargs, temp_log=False):
         super().__init__(*args, **kwargs)
         if temp_log:
             self.log_path = path.join(log_path, '%s_tmp.log'%self.name)
@@ -247,3 +247,99 @@ class LoggedWorker(BaseWorker):
         @BaseWorker._postamble
         '''
         Logger.info('Ended worker: %s'%self.name)
+
+try:
+    from tqdm import tqdm
+    class ProgressTrackedWorker(LoggedWorker):
+        '''
+        Worker class that tracks progress of the tasks
+        completed by a number of workers by updating a
+        shared tqdm instance
+        '''
+        def __init__(
+            self, 
+            *args, 
+            **kwargs,
+            progress_count=None, 
+            progress_desc=None, 
+            progress_unit=None, 
+        ):
+            super().__init__(*args, **kwargs)
+            self.progress_count = progress_count
+            self.progress_desc = progress_desc
+            self.progress_unit = progress_unit
+        @property
+        def progress_count(self):
+            '''
+            Getter for progress_count
+            '''
+            return self.__progress_count
+        @progress_count.setter
+        def progress_count(self, value):
+            '''
+            Setter for progress_count
+            '''
+            assert isinstance(value, int)
+            self.__progress_count = value
+        @property
+        def progress_desc(self):
+            '''
+            Getter for progress_desc
+            '''
+            return self.__progress_desc
+        @progress_desc.setter
+        def progress_desc(self, value):
+            '''
+            Setter for progress_desc
+            '''
+            assert isinstance(value, str)
+            self.__progress_desc = value
+        @property
+        def progress_unit(self):
+            '''
+            Getter for progress_unit
+            '''
+            return self.__progress_unit
+        @progress_unit.setter
+        def progress_unit(self, value):
+            '''
+            Setter for progress_unit
+            '''
+            assert isinstance(value, str)
+            self.__progress_unit = value
+        @property
+        def progress(self):
+            '''
+            Getter for progress
+            '''
+            return self.__progress
+        @progress.setter
+        def progress(self, value):
+            '''
+            Setter for progress
+            '''
+            assert isinstance(value, tqdm)
+            self.__progress = value
+        def _preamble(self):
+            '''
+            @LoggedWorker._preamble
+            '''
+            super()._preamble()
+            self.progress = tqdm(
+                total=self.progress_count, 
+                desc=self.progress_desc, 
+                unit=self.progress_unit
+            )
+        def _result_callback(self, task_result):
+            '''
+            @LoggedWorker._result_callback
+            '''
+            super()._result_callback(task_result)
+            self.progress.update(1)
+        def _closing_callback(self):
+            '''
+            @LoggedWorker._closing_callback
+            '''
+            self.progress.close()
+except ImportError:
+    Logger.warning('Failed to import tqdm, some worker classes will be unavailable')
