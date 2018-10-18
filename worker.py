@@ -26,6 +26,7 @@ Logger = logging.getLogger(__name__)
 from os import path
 from uuid import uuid4
 from multiprocessing import Process, JoinableQueue
+from multiprocessing.queues import JoinableQueue as JoinableQueueType
 
 from .utils import addProcessScopedHandler
 
@@ -71,7 +72,7 @@ class BaseWorker(Process):
     '''
     def __init__(self, source_queue, idx, target_queue=None, name=lambda: str(uuid4())):
         super().__init__(name=name() if callable(name) else name)
-        self.source_queue = source_queue,
+        self.source_queue = source_queue
         self.idx = idx
         self.target_queue = target_queue
     @property
@@ -85,7 +86,7 @@ class BaseWorker(Process):
         '''
         Setter for source_queue
         '''
-        assert value is None or isinstance(value, JoinableQueue)
+        assert value is None or isinstance(value, JoinableQueueType)
         self.__source_queue = value
     @property
     def idx(self):
@@ -111,7 +112,7 @@ class BaseWorker(Process):
         '''
         Setter for target_queue
         '''
-        assert value is None or isinstance(value, JoinableQueue)
+        assert value is None or isinstance(value, JoinableQueueType)
         self.__target_queue = value
     def _preamble(self):
         '''
@@ -130,16 +131,16 @@ class BaseWorker(Process):
         Procedure:
             Callback when a task is completed and no exception is thrown.
             By default it checks if the current task produced new tasks
-            to be added to the result_queue and adds them if any are found.
+            to be added to the target_queue and adds them if any are found.
         Preconditions:
             task_result is of type TaskResult
         '''
         assert isinstance(task_result, TaskResult)
-        if self.result_queue is not None and \
+        if self.target_queue is not None and \
             task_result.state is not None and \
             'next_tasks' in task_result.state:
             for next_task in task_result.state.get('next_tasks'):
-                self.result_queue.put(next_task)
+                self.target_queue.put(next_task)
     def _error_callback(self, task_result):
         '''
         Args:
@@ -163,7 +164,7 @@ class BaseWorker(Process):
             Tasks are either of type Dict<String, Any> or any callable
             that, when called, produces a Dict<String, Any>.
         '''
-        task = self._queue.get()
+        task = self.source_queue.get()
         task_result = TaskResult()
         if task is None:
             task_result.proceed = False
@@ -196,14 +197,13 @@ class BaseWorker(Process):
             try:
                 task_result = self._process_task()
             except Exception as e:
-                self._error_callback(TaskResult(
-                    True,
-                    dict(err=e)
-                ))
+                task_result = TaskResult(True, dict(err=e))
+                self._error_callback(task_result)
             else:
                 self._result_callback(task_result)
-                if not task_result.proceed:
-                    break
+            self.source_queue.task_done()
+            if not task_result.proceed:
+                break
         self._postamble()
 
 class LoggedWorker(BaseWorker):
@@ -211,7 +211,7 @@ class LoggedWorker(BaseWorker):
     Worker class that logs at start and finish as well as
     if it encounters an exception processing a task
     '''
-    def __init__(*args, log_path, **kwargs, temp_log=False):
+    def __init__(self, *args, log_path=None, temp_log=False, **kwargs):
         super().__init__(*args, **kwargs)
         if temp_log:
             self.log_path = path.join(log_path, '%s_tmp.log'%self.name)
@@ -241,6 +241,7 @@ class LoggedWorker(BaseWorker):
         @BaseWorker._preamble
         '''
         super()._error_callback(task_result)
+        Logger.error('STATE: ' + str(task_result.state))
         Logger.error('Failed to process task (%s)'%str(task_result.state.get('err')))
     def _postamble(self):
         '''
@@ -259,15 +260,17 @@ try:
         def __init__(
             self, 
             *args, 
-            **kwargs,
             progress_count=None, 
             progress_desc=None, 
             progress_unit=None, 
+            progress_position=None,
+            **kwargs
         ):
             super().__init__(*args, **kwargs)
             self.progress_count = progress_count
             self.progress_desc = progress_desc
             self.progress_unit = progress_unit
+            self.progress_position = progress_position
         @property
         def progress_count(self):
             '''
@@ -308,6 +311,19 @@ try:
             assert isinstance(value, str)
             self.__progress_unit = value
         @property
+        def progress_position(self):
+            '''
+            Getter for progress_position
+            '''
+            return self.__progress_position
+        @progress_position.setter
+        def progress_position(self, value):
+            '''
+            Setter for progress_position
+            '''
+            assert value is None or isinstance(value, str)
+            self.__progress_position = value
+        @property
         def progress(self):
             '''
             Getter for progress
@@ -328,18 +344,21 @@ try:
             self.progress = tqdm(
                 total=self.progress_count, 
                 desc=self.progress_desc, 
-                unit=self.progress_unit
+                unit=self.progress_unit,
+                position=self.progress_position
             )
         def _result_callback(self, task_result):
             '''
             @LoggedWorker._result_callback
             '''
             super()._result_callback(task_result)
+            Logger.debug('progress update: +1')
             self.progress.update(1)
-        def _closing_callback(self):
+        def _postamble(self):
             '''
-            @LoggedWorker._closing_callback
+            @LoggedWorker._postamble
             '''
+            super()._postamble()
             self.progress.close()
 except ImportError:
     Logger.warning('Failed to import tqdm, some worker classes will be unavailable')

@@ -22,6 +22,7 @@
 ## SOFTWARE.
 
 from multiprocessing import JoinableQueue, cpu_count
+from multiprocessing.queues import JoinableQueue as JoinableQueueType
 CPU_COUNT = cpu_count()
 
 from .utils import merge_kwargs
@@ -36,25 +37,25 @@ class WorkerPool(object):
         worker_count=(2 if CPU_COUNT <= 4 else 4),
         daemonize=True,
         task_class=None,
-        worker_kwargs=None,
-        task_kwargs=None,
+        worker_config=None,
+        task_config=None,
         config=None
     ):
-        self.__queue = None
-        self.__worker_class = None
+        self.__queue = queue
+        self.__worker_class = worker_class
         self.__worker_count = None
         self.__daemonize = None
         self.__task_class = None
-        self.__worker_kwargs = None
-        self.__task_kwargs = None
+        self.__worker_config = None
+        self.__task_config = None
         self.__workers = None
         for attr, value in merge_kwargs(
             config, 
             worker_count=worker_count, 
             daemonize=daemonize,
             task_class=task_class,
-            worker_kwargs=worker_kwargs,
-            task_kwargs=task_kwargs
+            worker_config=worker_config,
+            task_config=task_config
         ).items():
             setattr(self, attr, value)
     @property
@@ -68,7 +69,7 @@ class WorkerPool(object):
         '''
         setter for queue
         '''
-        assert value is None or isinstance(value, JoinableQueue)
+        assert value is None or isinstance(value, JoinableQueueType)
         self.__queue = value
     @property
     def worker_class(self):
@@ -128,31 +129,31 @@ class WorkerPool(object):
         assert value is None or (callable(value) and issubclass(value, object))
         self.__task_class = value
     @property
-    def worker_kwargs(self):
+    def worker_config(self):
         '''
-        getter for worker_kwargs
+        getter for worker_config
         '''
-        return self.__worker_kwargs
-    @worker_kwargs.setter
-    def worker_kwargs(self, value):
+        return self.__worker_config
+    @worker_config.setter
+    def worker_config(self, value):
         '''
-        setter for worker_kwargs
+        setter for worker_config
         '''
         assert value is None or isinstance(value, dict)
-        self.__worker_kwargs = value if value is not None else dict()
+        self.__worker_config = value if value is not None else dict()
     @property
-    def task_kwargs(self):
+    def task_config(self):
         '''
-        getter for task_kwargs
+        getter for task_config
         '''
-        return self.__task_kwargs
-    @task_kwargs.setter
-    def task_kwargs(self, value):
+        return self.__task_config
+    @task_config.setter
+    def task_config(self, value):
         '''
-        setter for task_kwargs
+        setter for task_config
         '''
         assert value is None or isinstance(value, dict)
-        self.__task_kwargs = value if value is not None else dict()
+        self.__task_config = value if value is not None else dict()
     @property
     def workers(self):
         '''
@@ -169,7 +170,7 @@ class WorkerPool(object):
     def add_task(self, *args, task=None, poison_pill=False, **kwargs):
         '''
         Args:
-            task: Object            => class to use to create new task
+            task: Object            => (callable) task to add to queue
             poison_pill: Boolean    => add poison pill to queue instead fo new task
         Procedure:
             Add new task to queue:
@@ -179,30 +180,31 @@ class WorkerPool(object):
                 3) If self.task_class is not None then self.task_class is used
                 to add task to queue
                 4) Otherwise raise Exception that no valid task constructor found.
-            NOTE: *args and **kwargs will be merged with self.task_kwargs and pushed to
+            NOTE: *args and **kwargs will be merged with self.task_config and pushed to
                   the task when it's created
         Preconditions:
-            task is type subclass of Object (and thus callable)
+            task is callable
             poison_pill is of type Boolean
         '''
-        assert task is None or (callable(task) and issubclass(task, object))
+        assert task is None or callable(task)
         assert isinstance(poison_pill, bool)
         if self.queue is None:
             raise Exception('Must initialize a queue before attempting to add a task')
         if poison_pill:
             task = None
-        if task is None or not callable(task):
+        elif task is None:
             if self.task_class is not None:
                 task = self.task_class(
                     *args,
                     **merge_kwargs(
                         kwargs,
-                        **self.task_kwargs
+                        **self.task_config
                     )
                 )
             else:
                 raise Exception('No valid Task constructor provided')
         self.queue.put(task)
+        return self
     def add_poison_pills(self):
         '''
         Args:
@@ -216,6 +218,7 @@ class WorkerPool(object):
             raise Exception('Cannot add poison pills with worker count as None')
         for idx in range(self.worker_count):
             self.add_task(poison_pill=True)
+        return self
     def initialize_workers(self):
         '''
         Args:
@@ -232,9 +235,10 @@ class WorkerPool(object):
         elif self.workers is not None:
             raise Exception('Cannot initialize workers more than once')
         self.workers = [
-            self.worker_class(self.queue, idx, **self.worker_kwargs)
+            self.worker_class(self.queue, idx, **self.worker_config)
             for idx in range(self.worker_count)
         ]
+        return self
     def start_workers(self, initialize=True):
         '''
         Args:
@@ -253,6 +257,7 @@ class WorkerPool(object):
             if not worker.is_alive():
                 worker.daemon = self.daemonize
                 worker.start()
+        return self
     def join_workers(self):
         '''
         Args:
@@ -279,6 +284,7 @@ class WorkerPool(object):
             for worker in self.workers:
                 if worker.is_alive():
                     worker.terminate()
+        return self
     def refresh_workers(self):
         '''
         Args:
@@ -292,6 +298,7 @@ class WorkerPool(object):
             self.terminate_workers()
         self.workers = None
         self.initialize_workers()
+        return self
     def join_tasks(self):
         '''
         Args:
@@ -303,3 +310,4 @@ class WorkerPool(object):
         '''
         if self.queue is not None:
             self.queue.join()
+        return self
