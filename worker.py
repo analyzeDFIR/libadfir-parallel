@@ -28,50 +28,17 @@ from uuid import uuid4
 from multiprocessing import Process, JoinableQueue
 from multiprocessing.queues import JoinableQueue as JoinableQueueType
 
+from .task import TaskResult, BaseTask
 from .utils import addProcessScopedHandler
 
-class TaskResult(object):
-    '''
-    Class used to hold the resulting state of processing
-    a task from a queue
-    '''
-    def __init__(self, proceed=True, state=None):
-        self.proceed = proceed
-        self.state = state
-    @property
-    def proceed(self):
-        '''
-        Getter for proceed
-        '''
-        return self.__proceed
-    @proceed.setter
-    def proceed(self, value):
-        '''
-        Setter for proceed
-        '''
-        assert isinstance(value, bool)
-        self.__proceed = value if value is not None else False
-    @property
-    def state(self):
-        '''
-        Getter for state
-        '''
-        return self.__state
-    @state.setter
-    def state(self, value):
-        '''
-        Setter for state
-        '''
-        assert value is None or isinstance(value, dict)
-        self.__state = value
-
-class BaseWorker(Process):
+class BaseWorker(BaseTask, Process):
     '''
     Base worker class for running tasks 
     from a (potentially shared) queue
     '''
     def __init__(self, source_queue, idx, target_queue=None, name=lambda: str(uuid4())):
-        super().__init__(name=name() if callable(name) else name)
+        Process.__init__(self, name=(name() if callable(name) else name))
+        BaseTask.__init__(self)
         self.source_queue = source_queue
         self.idx = idx
         self.target_queue = target_queue
@@ -114,97 +81,63 @@ class BaseWorker(Process):
         '''
         assert value is None or isinstance(value, JoinableQueueType)
         self.__target_queue = value
-    def _preamble(self):
+    def _result_callback(self):
         '''
         Args:
             N/A
-        Procedure:
-            Perform worker initialization tasks
-        Preconditions:
-            N/A
-        '''
-        pass
-    def _result_callback(self, task_result):
-        '''
-        Args:
-            task_result: TaskResult => result of last task processed
         Procedure:
             Callback when a task is completed and no exception is thrown.
             By default it checks if the current task produced new tasks
             to be added to the target_queue and adds them if any are found.
         Preconditions:
-            task_result is of type TaskResult
+            N/A
         '''
-        assert isinstance(task_result, TaskResult)
         if self.target_queue is not None and \
-            task_result.state is not None and \
-            'next_tasks' in task_result.state:
-            for next_task in task_result.state.get('next_tasks'):
+            self.result.state is not None and \
+            'next_tasks' in self.result.state:
+            for next_task in self.result.state.get('next_tasks'):
+                Logger.debug('Adding next task to target queue: %s'%str(next_task))
                 self.target_queue.put(next_task)
-    def _error_callback(self, task_result):
+        else:
+            Logger.debug('Not processing next tasks: %s, %s'%(str(self.target_queue), str(self.result.state)))
+    def _error_callback(self):
         '''
         Args:
-            task_result: TaskResult => result of last task processed
+            N/A
         Procedure:
             Callback when an exception as thrown trying to
             complete a task
         Preconditions:
-            task_result is of type TaskResult
+            N/A
         '''
-        assert isinstance(task_result, TaskResult)
+        pass
     def _process_task(self):
         '''
         Args:
-            N/A
-        Returns:
-            TaskResult
-            Whether the worker should continue and the resulting
-            state of running the task
-        Preconditions:
-            Tasks are either of type Dict<String, Any> or any callable
-            that, when called, produces a Dict<String, Any>.
-        '''
-        task = self.source_queue.get()
-        task_result = TaskResult()
-        if task is None:
-            task_result.proceed = False
-        else:
-            task_result.proceed = True
-            task_result.state = task() if callable(task) else task
-        return task_result
-    def _postamble(self):
-        '''
-        Args:
-            N/A
+            @BaseTask.__proces_task
         Procedure:
-            Performs worker teardown tasks
+            @BaseTask.__process_task
         Preconditions:
-            N/A
+            @BaseTask.__proces_task
+            Task from queue is subclass of BaseTask or callable
+            that returns TaskResult
         '''
-        return None
-    def run(self):
-        '''
-        Args:
-            N/A
-        Procedure:
-            Run the worker, picking tasks off the queue until 
-            a poison pill (None) is encountered
-        Preconditions:
-            N/A
-        '''
-        self._preamble()
         while True:
             try:
-                task_result = self._process_task()
+                task = self.source_queue.get()
+                if task is None:
+                    self.result = TaskResult(dict(proceed=False))
+                else:
+                    self.result = task() if callable(task) else task
+                self._result_callback()
             except Exception as e:
-                task_result = TaskResult(True, dict(err=e))
-                self._error_callback(task_result)
-            else:
-                self._result_callback(task_result)
-            self.source_queue.task_done()
-            if not task_result.proceed:
+                self.result = TaskResult(dict(proceed=True, err=e))
+                self._error_callback()
+            finally:
+                self.source_queue.task_done()
+            if 'proceed' in self.result.state \
+                and not self.result.state.get('proceed'):
                 break
-        self._postamble()
 
 class LoggedWorker(BaseWorker):
     '''
@@ -236,13 +169,12 @@ class LoggedWorker(BaseWorker):
         '''
         addProcessScopedHandler(self.log_path)
         Logger.info('Started worker: %s'%self.name)
-    def _error_callback(self, task_result):
+    def _error_callback(self):
         '''
         @BaseWorker._preamble
         '''
-        super()._error_callback(task_result)
-        Logger.error('STATE: ' + str(task_result.state))
-        Logger.error('Failed to process task (%s)'%str(task_result.state.get('err')))
+        super()._error_callback()
+        Logger.error('Failed to process task (%s)'%str(self.result.state.get('err')))
     def _postamble(self):
         '''
         @BaseWorker._postamble
@@ -347,18 +279,19 @@ try:
                 unit=self.progress_unit,
                 position=self.progress_position
             )
-        def _result_callback(self, task_result):
+        def _result_callback(self):
             '''
-            @LoggedWorker._result_callback
+            @LoggedWorker.__result_callback
             '''
-            super()._result_callback(task_result)
-            Logger.debug('progress update: +1')
+            super()._result_callback()
+            Logger.debug('Updating progress +1')
             self.progress.update(1)
         def _postamble(self):
             '''
             @LoggedWorker._postamble
             '''
             super()._postamble()
+            Logger.debug('Closing progress')
             self.progress.close()
 except ImportError:
     Logger.warning('Failed to import tqdm, some worker classes will be unavailable')

@@ -23,6 +23,7 @@
 
 import logging
 from os import path, rename, remove, getpid
+from io import TextIOWrapper
 from collections import defaultdict
 from glob import glob
 from heapq import merge as heapq_merge
@@ -85,8 +86,8 @@ def coalesce_files(glob_pattern, target, transform=lambda line: line, clean=True
             for handle in handle_list:
                 handle.close()
             if clean:
-                for path in file_list:
-                    remove(path)
+                for fpath in file_list:
+                    remove(fpath)
 
 def closeFileHandlers(logger=logging.root):
     '''
@@ -132,12 +133,12 @@ def addProcessScopedHandler(filename, logger=logging.root, mode='a', encoding='U
     else:
         for handler in logger.handlers:
             if isinstance(handler, ProcessAwareFileHandler):
-                if handler.get_stream_config() is None:
-                    handler.set_stream_config(dict(\
+                if handler.stream_config is None:
+                    handler.stream_config = dict(
                         filename=filename, 
                         mode=mode, 
-                        encoding=encoding\
-                    ))
+                        encoding=encoding
+                    )
 
 class ProcessAwareFileHandler(logging.FileHandler):
     '''
@@ -151,14 +152,14 @@ class ProcessAwareFileHandler(logging.FileHandler):
         filename = path.abspath(filename)
         logging.Handler.__init__(self)
         self.streams = defaultdict(dict)
-        self.set_filename(path.abspath(filename))
-        self.set_mode(mode)
-        self.set_encoding(encoding)
+        self.filename = path.abspath(filename)
+        self.mode = mode
+        self.encoding = encoding
         if delay:
             self.stream = None
         else:
             self._open()
-    def _getpid(self, pid=None):
+    def __getpid(self, pid=None):
         '''
         Args:
             pid: Integer|String => process identifier (PID)
@@ -170,89 +171,122 @@ class ProcessAwareFileHandler(logging.FileHandler):
         '''
         assert isinstance(pid, (int, str, type(None))), 'PID is not of type Integer or String'
         return str(getpid()) if pid is None else str(pid)
-    def _get_stream_attribute(self, attribute, pid):
+    def __get_attribute(self, attribute):
         '''
         Args:
-            @self._getpid
             attribute: String   => attribute of stream to receive
         Returns:
             Any
             stream attribute of pid's stream
         Preconditions:
-            @self._getpid
             attribute is of type String
         '''
-        assert isinstance(attribute, str), 'Attribute is not of type String'
+        assert isinstance(attribute, str)
         self.acquire()
         try:
-            return self.streams.get(self._getpid(pid), dict()).get(attribute)
+            return self.streams[self.__getpid()].get(attribute)
         finally:
             self.release()
-    def _set_stream_attribute(self, attribute, value, pid):
+    def __set_attribute(self, attribute, value):
         '''
+        Args:
+            attribute: String   => attribute of stream to receive
+            value: Any          => value to set attribute to
+        Procedure:
+            Set stream attribute to value
+        Preconditions:
+            attribute is of type String
         '''
+        assert isinstance(attribute, str)
         self.acquire()
         try:
-            self.streams[self._getpid(pid)][attribute] = value
+            self.streams[self.__getpid()][attribute] = value
         finally:
             self.release()
-    def get_filename(self, pid=None):
+    @property
+    def filename(self):
         '''
+        Getter for filename
         '''
-        return self._get_stream_attribute('filename', pid)
-    def set_filename(self, filename, pid=None):
+        return self.__get_attribute('filename')
+    @filename.setter
+    def filename(self, value):
         '''
+        Setter for filename
         '''
-        assert filename is not None, 'Filename is not of type String'
-        self._set_stream_attribute('filename', filename, pid)
-    def get_mode(self, pid=None):
+        assert isinstance(value, str)
+        self.__set_attribute('filename', value)
+    @property
+    def mode(self):
         '''
+        Getter for mode
         '''
-        return self._get_stream_attribute('mode', pid)
-    def set_mode(self, mode='a', pid=None):
+        return self.__get_attribute('mode')
+    @mode.setter
+    def mode(self, value):
         '''
+        Setter for mode
         '''
-        self._set_stream_attribute('mode', mode, pid)
-    def get_encoding(self, pid=None):
+        assert isinstance(value, str)
+        self.__set_attribute('mode', value)
+    @property
+    def encoding(self):
         '''
+        Getter for encoding
         '''
-        return self._get_stream_attribute('encoding', pid)
-    def set_encoding(self, encoding='UTF-8', pid=None):
+        return self.__get_attribute('encoding')
+    @encoding.setter
+    def encoding(self, value):
         '''
+        Setter for encoding
         '''
-        self._set_stream_attribute('encoding', encoding, pid)
-    def get_stream(self, pid=None):
+        assert isinstance(value, str)
+        self.__set_attribute('encoding', value)
+    @property
+    def stream(self):
         '''
+        Getter for stream
         '''
-        return self._get_stream_attribute('stream', pid)
-    def set_stream(self, stream=None, pid=None):
+        return self.__get_attribute('stream')
+    @stream.setter
+    def stream(self, value):
         '''
+        Setter for stream
         '''
-        current_PID = self._getpid() if pid is None else pid
-        assert stream is not None or (\
-            self.get_filename(current_PID) is not None and \
-            self.get_mode(current_PID) is not None\
-        ), 'Stream is not file-like object'
-        if stream is None:
-            self.set_stream(open(\
-                self.get_filename(current_PID), 
-                self.get_mode(current_PID), 
-                encoding=self.get_encoding(current_PID)\
-            ), current_PID)
-        else:
-            self._set_stream_attribute('stream', stream, pid)
-    def get_stream_config(self, pid=None):
+        assert isinstance(value, (TextIOWrapper, type(None)))
+        self.__set_attribute('stream', value)
+    @property
+    def stream_config(self):
         '''
+        Getter for stream_config
         '''
-        return self.streams.get(self._getpid(pid), None)
-    def set_stream_config(self, stream_config, pid=None):
+        return self.streams.get(self.__getpid())
+    @stream_config.setter
+    def stream_config(self, value):
         '''
+        Setter for stream_config
         '''
-        assert stream_config is not None, 'Stream_config is not dict-like object'
-        if 'filename' in stream_config and 'mode' in stream_config:
-            for attribute in ['filename', 'mode', 'encoding', 'stream']:
-                if attribute in stream_config:
-                    getattr(self, 'set_' + attribute)(stream_config.get(attribute), pid)
+        assert isinstance(value, dict)
+        assert 'filename' in value and 'mode' in value
+        for attr in ['filename', 'mode', 'encoding', 'stream']:
+            if attr in value:
+                setattr(self, attr, value.get(attr))
+    def create_stream(self):
+        '''
+        Args:
+            N/A
+        Returns:
+            File-like object
+            Creates stream using the current filename, mode, and encoding
+        Preconditions:
+            self.filename is not None
+            self.mode is not None
+            self.encoding is not None
+        '''
+        assert self.filename is not None \
+            and self.mode is not None \
+            and self.encoding is not None
+        return open(self.filename, self.mode, encoding=self.encoding)
     def close(self):
         '''
         Closes all streams in self.streams
@@ -261,14 +295,16 @@ class ProcessAwareFileHandler(logging.FileHandler):
         try:
             try:
                 exception = None
-                for key in self.streams:
+                for pid in self.streams:
                     try:
-                        self.get_stream(key).flush()
+                        stream = self.streams.get(pid).get('stream')
+                        if hasattr(stream, 'flush'):
+                            stream.flush()
                     except Exception as e:
                         exception = e
                     finally:
-                        current_stream = self.get_stream(key)
-                        self.set_stream(None, key)
+                        current_stream = self.stream
+                        self.stream = None
                         if hasattr(current_stream, 'close'):
                             current_stream.close()
                 if exception is not None:
@@ -279,16 +315,11 @@ class ProcessAwareFileHandler(logging.FileHandler):
                 logging.StreamHandler.close(self)
         finally:
             self.release()
-    def _open(self, pid=None):
-        current_PID = self._getpid(pid)
-        if current_PID in self.streams and \
-                self.get_stream(current_PID) is None and \
-                (self.get_filename(current_PID) is not None and\
-                 self.get_mode(current_PID) is not None):
-            self.set_stream(pid=current_PID)
+    def _open(self):
+        self.stream = self.create_stream()
     def emit(self, record):
         '''
+        @logging.FileHandler
         '''
         self._open()
-        self.stream = self.get_stream()
         logging.StreamHandler.emit(self, record)
