@@ -96,10 +96,7 @@ class BaseWorker(BaseTask, Process):
             self.result.state is not None and \
             'next_tasks' in self.result.state:
             for next_task in self.result.state.get('next_tasks'):
-                Logger.debug('Adding next task to target queue: %s'%str(next_task))
                 self.target_queue.put(next_task)
-        else:
-            Logger.debug('Not processing next tasks: %s, %s'%(str(self.target_queue), str(self.result.state)))
     def _error_callback(self):
         '''
         Args:
@@ -284,14 +281,12 @@ try:
             @LoggedWorker.__result_callback
             '''
             super()._result_callback()
-            Logger.debug('Updating progress +1')
             self.progress.update(1)
         def _postamble(self):
             '''
             @LoggedWorker._postamble
             '''
             super()._postamble()
-            Logger.debug('Closing progress')
             self.progress.close()
 except ImportError:
     Logger.warning('Failed to import tqdm, some worker classes will be unavailable')
