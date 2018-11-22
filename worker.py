@@ -36,12 +36,13 @@ class BaseWorker(BaseTask, Process):
     Base worker class for running tasks 
     from a (potentially shared) queue
     '''
-    def __init__(self, source_queue, idx, target_queue=None, name=lambda: str(uuid4())):
+    def __init__(self, source_queue, idx, target_queue=None, name=lambda: str(uuid4()), **context):
         Process.__init__(self, name=(name() if callable(name) else name))
         BaseTask.__init__(self)
         self.source_queue = source_queue
         self.idx = idx
         self.target_queue = target_queue
+        self.context = context
     @property
     def source_queue(self):
         '''
@@ -81,6 +82,19 @@ class BaseWorker(BaseTask, Process):
         '''
         assert value is None or isinstance(value, JoinableQueueType)
         self.__target_queue = value
+    @property
+    def context(self):
+        '''
+        Getter for context
+        '''
+        return self.__context
+    @context.setter
+    def context(self, value):
+        '''
+        Setter for context
+        '''
+        assert value is None or isinstance(value, dict)
+        self.__context = value
     def _result_callback(self):
         '''
         Args:
@@ -125,7 +139,7 @@ class BaseWorker(BaseTask, Process):
                 if task is None:
                     self.result = TaskResult(dict(proceed=False))
                 else:
-                    self.result = task() if callable(task) else task
+                    self.result = task(self.context) if callable(task) else task
                 self._result_callback()
             except Exception as e:
                 self.result = TaskResult(dict(proceed=True, err=e))
@@ -141,8 +155,8 @@ class LoggedWorker(BaseWorker):
     Worker class that logs at start and finish as well as
     if it encounters an exception processing a task
     '''
-    def __init__(self, *args, log_path=None, temp_log=False, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, *args, log_path=None, temp_log=False, **context):
+        super().__init__(*args, **context)
         if temp_log:
             self.log_path = path.join(log_path, '%s_tmp.log'%self.name)
         else:
@@ -193,9 +207,9 @@ try:
             progress_desc=None, 
             progress_unit=None, 
             progress_position=None,
-            **kwargs
+            **context
         ):
-            super().__init__(*args, **kwargs)
+            super().__init__(*args, **context)
             self.progress_count = progress_count
             self.progress_desc = progress_desc
             self.progress_unit = progress_unit
