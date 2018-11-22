@@ -128,6 +128,8 @@ def addProcessScopedHandler(filename, logger=logging.root, mode='a', encoding='U
     assert isinstance(encoding, str)
     assert logging_config is None or isinstance(logging_config, dict)
     if logger.handlers is None or len(logger.handlers) == 0:
+        if logging_config is None:
+            logging_config = dict()
         logging_config['handlers'] = [ProcessAwareFileHandler(filename, mode, encoding)]
         logging.basicConfig(**logging_config)
     else:
