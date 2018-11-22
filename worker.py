@@ -167,27 +167,27 @@ class LoggedWorker(BaseWorker):
         '''
         Getter for log_path
         '''
-        return self._log_path
+        return self.__log_path
     @log_path.setter
     def log_path(self, value):
         '''
         Setter for log_path
         '''
         assert isinstance(value, str)
-        self._log_path = value
+        self.__log_path = value
     @property
     def logging_config(self):
         '''
         Getter for logging_config
         '''
-        return self._logging_config
+        return self.__logging_config
     @logging_config.setter
     def logging_config(self, value):
         '''
         Setter for logging_config
         '''
         assert value is None or isinstance(value, dict)
-        self._logging_config = value
+        self.__logging_config = value
     def _preamble(self):
         '''
         @BaseWorker._preamble
