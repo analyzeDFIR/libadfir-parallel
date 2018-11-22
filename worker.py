@@ -155,12 +155,13 @@ class LoggedWorker(BaseWorker):
     Worker class that logs at start and finish as well as
     if it encounters an exception processing a task
     '''
-    def __init__(self, *args, log_path=None, temp_log=False, **context):
+    def __init__(self, *args, log_path=None, temp_log=False, logging_config=None, **context):
         super().__init__(*args, **context)
         if temp_log:
             self.log_path = path.join(log_path, '%s_tmp.log'%self.name)
         else:
             self.log_path = log_path
+        self.logging_config = logging_config
     @property
     def log_path(self):
         '''
@@ -174,11 +175,24 @@ class LoggedWorker(BaseWorker):
         '''
         assert isinstance(value, str)
         self._log_path = value
+    @property
+    def logging_config(self):
+        '''
+        Getter for logging_config
+        '''
+        return self._logging_config
+    @logging_config.setter
+    def logging_config(self, value):
+        '''
+        Setter for logging_config
+        '''
+        assert value is None or isinstance(value, dict)
+        self._logging_config = value
     def _preamble(self):
         '''
         @BaseWorker._preamble
         '''
-        addProcessScopedHandler(self.log_path)
+        addProcessScopedHandler(self.log_path, logging_config=self.logging_config)
         Logger.info('Started worker: %s'%self.name)
     def _error_callback(self):
         '''
