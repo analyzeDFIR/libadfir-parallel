@@ -28,7 +28,7 @@ from uuid import uuid4
 from multiprocessing import Process, JoinableQueue
 from multiprocessing.queues import JoinableQueue as JoinableQueueType
 
-from .task import TaskResult, BaseTask
+from .common.task import TaskResult, BaseTask
 from .utils import addProcessScopedHandler
 
 class BaseWorker(BaseTask, Process):
