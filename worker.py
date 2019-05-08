@@ -278,7 +278,7 @@ try:
             '''
             Setter for progress_position
             '''
-            assert value is None or isinstance(value, str)
+            assert value is None or isinstance(value, int)
             self.__progress_position = value
         @property
         def progress(self):
