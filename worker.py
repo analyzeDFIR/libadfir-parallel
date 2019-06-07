@@ -140,7 +140,7 @@ class BaseWorker(BaseTask, Process):
                 if task is None:
                     self.result = TaskResult(TaskStatus.SUCCESS, Container(proceed=False))
                 else:
-                    self.result = task(TaskStatus.SUCCESS, self.context) if callable(task) else task
+                    self.result = task(self.context) if callable(task) else task
                 self._result_callback()
             except Exception as e:
                 self.result = TaskResult(TaskStatus.FAILURE, Container(proceed=True, err=e))
